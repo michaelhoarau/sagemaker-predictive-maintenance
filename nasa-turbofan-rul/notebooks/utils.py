@@ -3,6 +3,9 @@ import re
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+from IPython.display import clear_output
+import time
+import tabulate
 
 def get_training_metrics(training_job_name, train_metric_name, val_metric_name):
     """
@@ -86,3 +89,41 @@ def print_confusion_matrix(confusion_matrix, class_names, figsize = (10,7), font
     plt.ylabel('True label')
     plt.xlabel('Predicted label')
     return fig
+
+def get_tuner_status(xgb_tuner_job_name):
+    sagemaker_client = boto3.Session().client('sagemaker')
+    tuning_job_result = sagemaker_client.describe_hyper_parameter_tuning_job(HyperParameterTuningJobName=xgb_tuner_job_name)
+    status = tuning_job_result['HyperParameterTuningJobStatus']
+
+    # While the tuning job is in progress...
+    jobs_headers = [
+        'TrainingJobName', 'FinalObjectiveValue', 'eta', 
+        'gamma', 'max_depth', 'subsample', 'colsample_bytree'
+    ]
+    while status == 'InProgress':
+        # Clear the notebook output cell to update its content:
+        clear_output()
+        print('Tuning job in progress (status: {})'.format(status))
+
+        # Check if at least one job started:
+        job_count = tuning_job_result['TrainingJobStatusCounters']['Completed']
+        if job_count > 0:
+            print("{} training jobs are complete:".format(job_count))
+
+            # Get the details about the different jobs launched by the hyperparameter tuning process
+            jobs_df = sagemaker.HyperparameterTuningJobAnalytics(xgb_tuner_job_name).dataframe()
+
+            # Sorts the dataframe and keep only the fields we are interested into:
+            jobs_df = jobs_df.sort_values(by='TrainingStartTime', ascending=False)[jobs_headers]
+            jobs_df = jobs_df[jobs_df['FinalObjectiveValue'] > -float('inf')]
+            print(tabulate.tabulate(jobs_df, tablefmt='psql', headers=jobs_headers))
+
+        else:
+            print('No job completed yet.')
+
+        time.sleep(30)
+
+        tuning_job_result = sagemaker_client.describe_hyper_parameter_tuning_job(HyperParameterTuningJobName=xgb_tuner_job_name)
+        status = tuning_job_result['HyperParameterTuningJobStatus']
+        
+    return status
